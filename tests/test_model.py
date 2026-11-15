@@ -46,3 +46,17 @@ def test_save_load_same_predictions(tmp_path):
     m2 = WorldModel.load(tmp_path / "m.pt")
     np.testing.assert_allclose(m.predict_delta(X), m2.predict_delta(X))
     np.testing.assert_allclose(m.predict_next(X, X[:, :2]), X[:, :2] + m.predict_delta(X), rtol=1e-6)
+
+
+def test_gru_overfits_tiny():
+    """The target depends on the OLDEST window, so the model must use its memory."""
+    def seq(n, seed):
+        rng = np.random.default_rng(seed)
+        X = rng.normal(size=(n, 3, 4)).astype(np.float32)
+        Y = (X[:, 0, :2] * 0.5).astype(np.float32)
+        return X, Y, np.ones_like(Y)
+    model, _ = train_model(seq(64, 0), seq(64, 1), epochs=600, lr=3e-3, batch=16, patience=600,
+                           arch="gru", history=3)
+    X, Y, _ = seq(64, 1)
+    assert model.arch == "gru" and model.history == 3
+    assert np.mean((model.predict_delta(X) - Y) ** 2) < 2e-2
