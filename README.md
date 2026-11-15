@@ -137,7 +137,7 @@ v1 has three problems: no memory, it knows only one controller, and its rollouts
 changes **one thing only**, so every result has a clear cause, and each step lives on its own branch.
 
 1. **Memory:** MLP → GRU, nothing else changed. *Done, see below.*
-2. **Varied data:** train on adaptive + MPC + student data. Does it generalise to other controllers?
+2. **Varied data:** train on adaptive + MPC + student data. Does it generalise to other controllers? *Done, see below.*
 3. **Bounded predictions:** keep rollouts physical. Do the explosions stop?
 
 Later: an ensemble to tell when the model is uncertain, and a learned world model used for planning,
@@ -210,6 +210,87 @@ All tables: [`results/compare_step1/report.md`](results/compare_step1/report.md)
 early stopping). Small differences, such as validation losses 0.02 apart or close medians, may be within
 seed-to-seed variation. Running several seeds would settle that.
 
+## Step 2: does varied data help?
+
+Same two model types as before (MLP v1's settings, and the GRU with 8 windows), same features, training
+settings and tests. Only the **training data** changes:
+
+| Data set | Used for training? | Training windows |
+|---|---|---|
+| adaptive (our controller) | yes | 28.6k |
+| MPC (`teacher_v2`) | yes | 47.6k |
+| student round 1 (`dagger_r1`) | yes | 9.5k |
+| student round 2 (`dagger_r2`) | **no, kept completely unseen** | 0 |
+
+Student r2 is held back on purpose, so we can still test a controller the model has *never met*. As
+always, the test runs (run id ending in 9) of every set are never used for training. The sets are mixed
+as they are, with no re-weighting, so MPC is about 55% of the training data.
+
+One fix was needed first. The adaptive and MPC data reuse the same run numbers (0–299), and the code
+looked up runs by number alone. For a history model, that would glue two different runs into one fake
+history. Runs are now identified by (data set, run number). Step 1's results are unchanged by this fix.
+
+### One step ahead (mean / median absolute error; bold = best median)
+
+| Target | Test set | MLP v1 | GRU (step 1) | MLP, mixed data | GRU, mixed data |
+|---|---|---|---|---|---|
+| A p99 latency (ms) | adaptive | 5.1 / 0.50 | 4.5 / 0.57 | 4.3 / **0.44** | 5.4 / 0.51 |
+| A p99 latency (ms) | MPC | 38.8 / 2.25 | 9.1 / 2.39 | 3.6 / **0.46** | 4.9 / 0.59 |
+| B batches/s | MPC | 107 / 80.1 | 88.3 / 75.0 | 19.1 / **11.4** | 24.5 / 15.5 |
+| C work (core-ms) | MPC | 252 / 197 | 260 / 195 | 67.8 / **49.1** | 84.2 / 60.9 |
+| A p99 latency (ms) | student r2 (unseen) | 21.6 / 1.23 | 14.8 / 2.40 | 2.2 / **0.36** | 8.6 / 0.36 |
+| B batches/s | student r2 (unseen) | 64.5 / 50.1 | 91.0 / 70.7 | 16.5 / **9.7** | 19.1 / 12.2 |
+| C work (core-ms) | student r2 (unseen) | 148 / 88.3 | 168 / 132 | 55.0 / **38.1** | 60.6 / 43.5 |
+
+Best median, out of 8 targets, for the MLP with mixed data: 6 on adaptive, 7 on MPC, 5 on student r1 and
+6 on student r2. The GRU with mixed data wins all the others except one: on adaptive data, MLP v1 still
+has the best median for B's throughput. (On student r2, the two mixed models' latency medians are tied at
+0.36 ms.)
+
+### Many steps ahead: error after 10 s (20 windows) on student r2, the unseen controller
+
+| Target | MLP v1 | GRU (step 1) | MLP, mixed data | GRU, mixed data | Persistence |
+|---|---|---|---|---|---|
+| A p99 latency (ms) | 4.4 × 10³⁰¹ | 36.4 | 35.3 * | **34.0** | 50.7 |
+| B batches/s | 198 | 306 | **79.7** | 111 | 158 |
+| C work (core-ms) | 604 | 489 | **358** | 393 | 563 |
+| GPU 0 temperature (°C) | 9.8 | 2.1 | 2.3 | **0.89** | 5.9 |
+
+\* Misleading on its own: about 2% of this model's rollouts blow up to infinity, and those are left out
+of the average. At 2.5 and 5 s, while they're still finite, they push the mean to 10⁴–10¹³³ ms.
+
+![Rollout error, four models](results/compare_step2/error_vs_horizon.png)
+
+All tables: [`results/compare_step2/report.md`](results/compare_step2/report.md).
+
+### What step 2 shows
+
+1. **Varied data fixes most of the generalisation problem.** On MPC data, the typical (median) error
+   drops by 2–8× for every target compared with MLP v1. For example, B's throughput error falls from 80
+   to 11 batches/s. One step ahead, the mixed-data MLP's *mean* error now beats "nothing changes"
+   on other controllers' data for all four plotted targets. On *medians*, "nothing changes" still wins
+   for B's throughput and C's work, so typical windows where little changes are still slightly hard.
+2. **It also works on the controller the model never saw.** On student r2, the mixed-data MLP's median
+   latency error is 0.36 ms (MLP v1: 1.23 ms), and B's throughput error is 9.7 (v1: 50.1). So the model
+   didn't just memorise three controllers. Seeing a *range* of behaviour helped it with a new one.
+3. **One step ahead, almost nothing was lost on familiar data.** On the adaptive test runs, the mixed-data MLP has a
+   better median than MLP v1 on 6 of 8 targets and is slightly worse on two (B's throughput: 9.3 against
+   8.7; A's queue: 1.25 against 1.23 ms). Its rollouts on adaptive data are a different story (point 5).
+4. **With varied data, the plain MLP beats the GRU again.** It wins most targets and has a lower
+   validation loss (0.184 against 0.211). One possible reading: in step 1, memory partly made up for
+   unfamiliar data, and varied data does that job better. Overfitting may play a part too: the mixed
+   GRU's best validation loss came at about epoch 46, while the MLP kept improving until about epoch 185.
+5. **Rollouts: the mixed-data MLP still explodes.** On MPC and student r2 data, about 1–2% of its latency
+   rollouts blow up, and those few still dominate the averages. On adaptive data it is now *worse* than
+   MLP v1 (latency error after 5 s: 6 290 ms, against 52), and other targets explode too, such as A's
+   queued work. None of the mixed-data GRU's rollouts on MPC or student r2 data went above 10⁶. Over 10 s
+   on the unseen controller, it beats "nothing changes" on all four plotted targets. But it can still
+   drift a long way: on MPC data its latency error after 10 s is 2 490 ms, against 23 for "nothing
+   changes". Keeping every rollout physical is step 3's job.
+
+**Caveat:** one random seed per model, as in step 1. The step-2 improvements are large (several times),
+so they are very unlikely to be seed noise. Close calls between the two mixed-data models might be.
+
 ## How to run
 
 Python 3 with numpy, torch, matplotlib, pytest. The generalisation test sets come from a checkout of the
@@ -240,6 +321,15 @@ Step 1 models (each a few minutes on CPU), then the comparison:
 # for each model: evaluate.py --noise-runs 0 --out results/onestep_<name>, rollout.py --out results/rollout_<name>
 .venv/bin/python experiments/compare.py --out results/compare_step1 --models \
   mlp_v1:results/onestep:results/rollout,mlp_h4:results/onestep_mlp_h4:results/rollout_mlp_h4,gru_h8:results/onestep_gru_h8:results/rollout_gru_h8
+```
+
+Step 2 models: the same commands, with three data directories (`$OLD` is `../priority_scheduler_model/data`):
+
+```bash
+.venv/bin/python experiments/train.py --data data/adaptive_v1,$OLD/teacher_v2,$OLD/dagger_r1 --arch mlp --history 1 --out models/mlp_mix.pt
+.venv/bin/python experiments/train.py --data data/adaptive_v1,$OLD/teacher_v2,$OLD/dagger_r1 --arch gru --history 8 --out models/gru_mix.pt
+.venv/bin/python experiments/compare.py --out results/compare_step2 --models \
+  mlp_v1:results/onestep:results/rollout,gru_h8:results/onestep_gru_h8:results/rollout_gru_h8,mlp_mix:results/onestep_mlp_mix:results/rollout_mlp_mix,gru_mix:results/onestep_gru_mix:results/rollout_gru_mix
 ```
 
 ## Layout

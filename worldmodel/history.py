@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .data import group_by_run
+from .data import group_by_run, run_key
 from .features import build_arrays
 
 
@@ -19,7 +19,7 @@ def build_history_arrays(records: list[dict], k: int):
     H = np.empty((len(ordered), k, X.shape[1]), dtype=np.float32)
     first = 0
     for i, r in enumerate(ordered):
-        if i and ordered[i - 1]["run"] != r["run"]:
+        if i and run_key(ordered[i - 1]) != run_key(r):
             first = i
         for j in range(k):                       # j = 0 is the oldest row
             H[i, j] = X[max(i - (k - 1 - j), first)]
