@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiments.evaluate import SETS  # noqa: E402
 from worldmodel.data import group_by_run, load_records  # noqa: E402
-from worldmodel.features import KEY_TARGETS, decode_state, encode_state, state_mask  # noqa: E402
+from worldmodel.features import KEY_TARGETS, STATE_NAMES, decode_state, encode_state, state_mask  # noqa: E402
 from worldmodel.model import WorldModel  # noqa: E402
 from worldmodel.rollout import rollout  # noqa: E402
 
@@ -41,9 +41,17 @@ def _key(states: np.ndarray, recs: list[dict] | None = None) -> dict[str, np.nda
 
 def error_curves(model, runs: dict, horizon: int, every: int):
     err = {m: {t: [[] for _ in range(horizon)] for t in KEY_TARGETS} for m in ("mlp", "persistence")}
+    bounds = model.bounds
+    at_max = {t: [[] for _ in range(horizon)] for t in KEY_TARGETS}
+    idx = [STATE_NAMES.index(t) for t in KEY_TARGETS]
     for recs in runs.values():
         for start in range(0, len(recs) - horizon + 1, every):
             pred, true = rollout(model, recs, start, horizon)
+            if bounds is not None:      # "stuck at the ceiling": prediction at the training maximum
+                lo, hi = bounds
+                for t, i in zip(KEY_TARGETS, idx):
+                    for h in range(len(pred)):
+                        at_max[t][h].append(float(hi[i] > lo[i] and pred[h, i] >= hi[i] - 1e-6))
             tk = _key(true, recs[start:start + horizon])
             s0 = encode_state(recs[start]["input"]["telemetry"])
             for name, p in (("mlp", _key(pred)), ("persistence", _key(np.repeat(s0[None], len(true), 0)))):
@@ -51,8 +59,11 @@ def error_curves(model, runs: dict, horizon: int, every: int):
                     for h, e in enumerate(np.abs(p[t] - tk[t])):
                         if np.isfinite(e):
                             err[name][t][h].append(e)
-    return {m: {t: [float(np.mean(v)) if v else float("nan") for v in hs] for t, hs in d.items()}
-            for m, d in err.items()}
+    out = {m: {t: [float(np.mean(v)) if v else float("nan") for v in hs] for t, hs in d.items()}
+           for m, d in err.items()}
+    if bounds is not None:
+        out["at_max"] = {t: [float(np.mean(v)) if v else float("nan") for v in hs] for t, hs in at_max.items()}
+    return out
 
 
 def plot_curves(curves: dict, path: Path, horizon: int):
@@ -122,6 +133,13 @@ def main():
                      for h in (1, 5, 10, 20) if h <= a.horizon]
             md.append(f"| {t} | " + " | ".join(cells) + " |")
         md.append("")
+        if "at_max" in c:
+            md += ["Share of predictions stuck at the training maximum:", "",
+                   "| target | step 1 | step 5 | step 10 | step 20 |", "|---|---|---|---|---|"]
+            for t in KEY_TARGETS:
+                md.append(f"| {t} | " + " | ".join(f"{c['at_max'][t][h - 1]:.1%}" for h in (1, 5, 10, 20)
+                                                   if h <= a.horizon) + " |")
+            md.append("")
         print(f"{name}: done", flush=True)
     plot_curves(curves, out / "error_vs_horizon.png", a.horizon)
     (out / "curves.json").write_text(json.dumps(curves, indent=1))

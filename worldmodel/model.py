@@ -79,6 +79,13 @@ class WorldModel:
     def history(self) -> int:
         return int(self.meta.get("history", 1))
 
+    @property
+    def bounds(self) -> tuple[np.ndarray, np.ndarray] | None:
+        """(min, max) of each encoded state number seen in training, if added (worldmodel.bounds)."""
+        if "state_min" not in self.meta:
+            return None
+        return (np.asarray(self.meta["state_min"], np.float32), np.asarray(self.meta["state_max"], np.float32))
+
     def prepare(self, H: np.ndarray) -> np.ndarray:
         """History [N, >=k, n_in] (newest row last) -> network input. Only the last k rows are used."""
         H = H[:, -self.history:]
