@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+models/
+logs/
+results/**/*.png
+.DS_Store
+docs/superpowers/
