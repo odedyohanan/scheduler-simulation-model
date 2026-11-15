@@ -267,21 +267,23 @@ All tables: [`results/compare_step2/report.md`](results/compare_step2/report.md)
 
 1. **Varied data fixes most of the generalisation problem.** On MPC data, the typical (median) error
    drops by 2–8× for every target compared with MLP v1. For example, B's throughput error falls from 80
-   to 11 batches/s. One step ahead, the mixed-data models now beat "nothing changes" on other
-   controllers' data too, for all four plotted targets.
+   to 11 batches/s. One step ahead, the mixed-data MLP's *mean* error now beats "nothing changes"
+   on other controllers' data for all four plotted targets. On *medians*, "nothing changes" still wins
+   for B's throughput and C's work, so typical windows where little changes are still slightly hard.
 2. **It also works on the controller the model never saw.** On student r2, the mixed-data MLP's median
    latency error is 0.36 ms (MLP v1: 1.23 ms), and B's throughput error is 9.7 (v1: 50.1). So the model
    didn't just memorise three controllers. Seeing a *range* of behaviour helped it with a new one.
-3. **Almost nothing was lost on familiar data.** On the adaptive test runs, the mixed-data MLP has a
+3. **One step ahead, almost nothing was lost on familiar data.** On the adaptive test runs, the mixed-data MLP has a
    better median than MLP v1 on 6 of 8 targets and is slightly worse on two (B's throughput: 9.3 against
-   8.7; A's queue: 1.25 against 1.23 ms).
+   8.7; A's queue: 1.25 against 1.23 ms). Its rollouts on adaptive data are a different story (point 5).
 4. **With varied data, the plain MLP beats the GRU again.** It wins most targets and has a lower
    validation loss (0.184 against 0.211). One possible reading: in step 1, memory partly made up for
-   unfamiliar data, and varied data does that job better. Step 1's overfitting is another possible cause:
-   the GRU stopped early, after 66 epochs.
-5. **Rollouts: fewer explosions, but they still happen.** MLP v1's latency rollouts blew up on almost every
-   test set. With mixed data, only about 1–2% of the MLP's rollouts blow up, but those few still dominate
-   the averages. None of the mixed-data GRU's rollouts on MPC or student r2 data went above 10⁶. Over 10 s
+   unfamiliar data, and varied data does that job better. Overfitting may play a part too: the mixed
+   GRU's best validation loss came at about epoch 46, while the MLP kept improving until about epoch 185.
+5. **Rollouts: the mixed-data MLP still explodes.** On MPC and student r2 data, about 1–2% of its latency
+   rollouts blow up, and those few still dominate the averages. On adaptive data it is now *worse* than
+   MLP v1 (latency error after 5 s: 6 290 ms, against 52), and other targets explode too, such as A's
+   queued work. None of the mixed-data GRU's rollouts on MPC or student r2 data went above 10⁶. Over 10 s
    on the unseen controller, it beats "nothing changes" on all four plotted targets. But it can still
    drift a long way: on MPC data its latency error after 10 s is 2 490 ms, against 23 for "nothing
    changes". Keeping every rollout physical is step 3's job.
