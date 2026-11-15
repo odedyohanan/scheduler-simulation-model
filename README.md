@@ -164,12 +164,17 @@ uses memory matters.
 | B batches/s | adaptive | 18.5 / **8.7** | 23.0 / 12.9 | 22.6 / 11.9 |
 | A queued work (ms) | MPC | 10 700 / 2.96 | 402 / 3.19 | 37 / **2.14** |
 | A p99 latency (ms) | MPC | 38.8 / **2.25** | 14.9 / 3.21 | 9.1 / 2.39 |
+| A CPU cores | MPC | 0.48 / 0.35 | 0.54 / 0.41 | 0.30 / **0.23** |
+| B buffer (batches) | MPC | 5.4 / 4.1 | 5.6 / 4.6 | 4.4 / **3.6** |
+
+Best median, out of 8 targets: on adaptive data, MLP v1 5, GRU 2, MLP with history 1. On MPC data,
+GRU 6, MLP v1 2, MLP with history 0.
 
 ### Many steps ahead: A p99 latency error after 10 s (20 windows)
 
 | Test set | MLP v1 | MLP with history | GRU | Persistence |
 |---|---|---|---|---|
-| adaptive | 1.7 × 10¹⁸ | 18.7 | 20.3 | 31.6 |
+| adaptive | 1.7 × 10¹⁸ | **18.7** | 20.3 | 31.6 |
 | MPC | 1.9 × 10²⁹⁰ | 1.0 × 10³² | **456** | 23.3 |
 | student r1 | 4.6 × 10²³⁴ | 4.3 × 10²² | **27.4** | 5.6 |
 
@@ -179,20 +184,31 @@ All tables: [`results/compare_step1/report.md`](results/compare_step1/report.md)
 
 ### What step 1 shows
 
-1. **Memory doesn't help the typical one-step prediction.** On medians, MLP v1 is as good as or better
-   than both history models on most targets. Both history models also have a *worse* validation loss
-   (0.195 and 0.202, against 0.173), while their training loss is *lower*. That is **overfitting**: with
-   more input, they start memorising details of the 240 training runs instead of general rules.
-2. **The GRU makes far fewer wild mistakes.** On MPC data, A's queue error falls from 10 700 ms (mean) to
-   37 ms. The rare huge misses mostly disappear.
-3. **The GRU's rollouts no longer explode.** After 10 s, MLP v1's latency predictions reach 10²⁹⁰. The
-   GRU's stay in a sane range on every test set. The MLP with history still explodes, so *seeing more*
-   isn't what fixed it. A likely reason: the GRU's memory is squashed into a fixed range (tanh), which
-   makes extreme outputs hard to produce. That is a side effect of the architecture, not proof that it
-   "understands" the queue.
-4. **It is still worse than "nothing changes" on other controllers.** On MPC and student runs, persistence
-   wins on latency and B's throughput. Step 1 didn't fix the data problem; that's step 2's job.
-5. **Over 10 s on familiar data, the GRU is best on GPU temperature and B's throughput.**
+1. **On familiar data, memory doesn't help the typical prediction.** On the adaptive test runs, MLP v1
+   has the best median error on 5 of 8 targets.
+2. **On the MPC controller's data, the GRU is best.** It has the best median on 6 of 8 targets there. It
+   also makes far fewer wild mistakes: A's queue error falls from 10 700 ms (mean) to 37 ms. On the
+   student's data the picture is mixed, and no model wins clearly.
+3. **The history models overfit.** Both have a worse validation loss than v1 (0.195 and 0.202, against
+   0.173). During training they reach a *lower* training loss than v1 ever does (0.157 and 0.143, against
+   0.161), and their gap between training and validation loss is about 2.5× larger. With more input, they
+   start memorising details of the 240 training runs instead of general rules.
+4. **The GRU's rollouts diverge far more slowly, but they still diverge.** After 10 s, MLP v1's latency
+   predictions reach 10²⁹⁰. The GRU's error on MPC data grows 8.6 → 36 → 58 → 456 ms. That's far saner, but
+   still about 20× worse than "nothing changes" (23 ms), and its queue error reaches 5 260 ms against 145.
+   The MLP with history explodes too, but only on other controllers' data. On familiar data it is fine.
+   So *seeing more* isn't what slows the GRU down. The reason is mostly mechanical: the GRU's memory is
+   squashed into the range −1…1 (tanh) and fed to a linear output layer, so the change it can predict in
+   one step has a hard limit. That is a property of the architecture, not proof that it "understands" the
+   system.
+5. **Other controllers are still the main problem.** On MPC and student runs, "nothing changes" still
+   beats every model on latency and B's throughput most of the time. Step 1 didn't fix the data problem;
+   that's step 2's job.
+6. **Over 10 s on familiar data, the GRU is best on GPU temperature and B's throughput.**
+
+**Caveat:** every model was trained once, with one random seed and v1's training settings (learning rate,
+early stopping). Small differences, such as validation losses 0.02 apart or close medians, may be within
+seed-to-seed variation. Running several seeds would settle that.
 
 ## How to run
 
