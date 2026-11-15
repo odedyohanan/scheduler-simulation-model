@@ -20,7 +20,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from worldmodel.baselines import fluid_next  # noqa: E402
 from worldmodel.data import load_records  # noqa: E402
-from worldmodel.features import KEY_TARGETS, STATE_NAMES, build_arrays, decode_state  # noqa: E402
+from worldmodel.features import KEY_TARGETS, STATE_NAMES, decode_state  # noqa: E402
+from worldmodel.history import build_history_arrays  # noqa: E402
 from worldmodel.metrics import per_target  # noqa: E402
 from worldmodel.model import WorldModel  # noqa: E402
 from worldmodel.noise import noise_floor  # noqa: E402
@@ -46,10 +47,11 @@ def _decode(arr):
 
 
 def evaluate_set(model: WorldModel, recs: list[dict]) -> dict:
-    X, S, Y, M = build_arrays(recs)
+    """The learned model is reported under the key "mlp" (any architecture), for comparable files."""
+    H, S, Y, M, recs = build_history_arrays(recs, model.history)      # grouped by run, time-ordered
     true = _decode(S + Y)
     mask = {t: M[:, i] for t, i in zip(KEY_TARGETS, _IDX)}
-    preds = {"mlp": _decode(model.predict_next(X, S)), "persistence": _decode(S)}
+    preds = {"mlp": _decode(model.predict_next(model.prepare(H), S)), "persistence": _decode(S)}
     fl = [fluid_next(r) for r in recs]
     preds["fluid"] = {t: np.array([f.get(t, np.nan) for f in fl]) for t in KEY_TARGETS}
     heavy = overloaded_mask(recs)
@@ -90,9 +92,11 @@ def main():
 
     test_runs = [r for r in range(300) if r % 10 == 9][:a.noise_runs]
     windows = [10, 40, 70, 100, 115]
-    print(f"noise floor: {len(test_runs)} runs x {len(windows)} windows x {a.noise_k} seeds", flush=True)
-    per_run = [noise_floor(r, windows, k=a.noise_k) for r in test_runs]
-    nf = {t: float(np.nanmean([p[t] for p in per_run])) for t in KEY_TARGETS}
+    nf = None
+    if test_runs:          # --noise-runs 0 skips it (it doesn't depend on the model)
+        print(f"noise floor: {len(test_runs)} runs x {len(windows)} windows x {a.noise_k} seeds", flush=True)
+        per_run = [noise_floor(r, windows, k=a.noise_k) for r in test_runs]
+        nf = {t: float(np.nanmean([p[t] for p in per_run])) for t in KEY_TARGETS}
 
     results, md = {"noise_floor": nf, "sets": {}}, [f"# One-step evaluation — `{a.model}`", "",
         "Mean and median absolute error in real units (ms, batches/s, core-ms per window, °C). Lower is "
