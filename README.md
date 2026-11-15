@@ -314,7 +314,7 @@ seen. So the rollout report also shows **how often a prediction is stuck at the 
 
 \* Not a real average. The unbounded MLP's exploded rollouts reach infinity by then and are left out.
 The bounded numbers include every rollout. Bold = lowest error in the row. Over the first few seconds,
-"nothing changes" is still the best latency predictor on other controllers' data.
+"nothing changes" is still the best latency predictor on MPC data (and on student r2 up to about 2.5 s).
 
 ![Rollout error, bounded vs unbounded](results/compare_step3/error_vs_horizon.png)
 
@@ -327,18 +327,23 @@ tables are in `results/rollout_*_bounded/summary.md`.
    against up to 10²⁷⁸ ms before. All averages now include every rollout, so they're honest.
 2. **They also help where nothing exploded.** Small drifts get pulled back too. After 10 s, the MLP's
    GPU temperature error falls by about half on MPC and student r2 (for example 2.30 → 0.96 °C), by 40% on
-   adaptive data, and barely changes on student r1. C's work error drops by up to 20%.
-3. **Predictions rarely hit the ceiling.** Latency and queue predictions sit at the training maximum in
-   at most 2% of cases. B's throughput hits its maximum more often (up to 20% for the GRU), but that one is
-   a real limit: B can't go above 1 000 batches/s, and the true value is within 1% of it in 19–29% of
-   test windows. GPU temperature reaches its maximum in up to 13% of predictions after 10 s, while only about 5%
-   of true values are even within 1% of it, so the models drift a little hot.
+   adaptive data, and barely changes on student r1. The MLP's C work error drops by up to 20%; the GRU's
+   changes little either way.
+3. **Latency and queue predictions rarely hit the ceiling: at most 2% of cases.** Other numbers hit it more
+   often, partly because of real limits:
+   - B's throughput can't go above 1 000 batches/s. Predictions sit there in up to 20% of cases (GRU),
+     and the true value is within 1% of it in 19–29% of test windows, so that's mostly physics.
+   - B's buffer holds at most 16 batches. Predictions say "full" in up to 16% of cases, against 0–9% of
+     true test windows, so the models over-predict a full buffer somewhat.
+   - GPU temperature reaches its maximum in up to 13% of predictions after 10 s, while only about 5% of
+     true values are even within 1% of it, so the models drift a little hot.
 4. **Bounded isn't the same as right.** The bounded MLP's latency stays well inside the range, but it is
    still worse than "nothing changes" on other controllers' data (MPC: 54.5 against 23.3 ms). The MLP
    drifts upward and nothing pulls it back. Bounds limit the damage but don't teach the model to correct
    itself.
-5. **The best long-range model is now the bounded GRU.** After 10 s, it beats "nothing changes" on all
-   four plotted targets on adaptive and student r2 data. On MPC and student r1 data it beats it on three,
+5. **The bounded GRU is now the best for latency and temperature over 10 s.** (The bounded MLP still wins
+   some targets, such as C's work on student r2.) After 10 s, the bounded GRU beats "nothing changes" on
+   all four plotted targets on adaptive and student r2 data. On MPC and student r1 data it beats it on three,
    and is slightly worse on latency (24.6 against 23.3 ms; 6.7 against 5.6 ms).
 
 **Caveat:** same models and seeds as step 2. Step 3 changes only what happens after each prediction, so
