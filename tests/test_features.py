@@ -42,7 +42,15 @@ def test_load_skips_header_and_filters_split(tmp_path):
     val = load_records([str(tmp_path)], split="val")
     assert len(val) == 4 and {r["run"] for r in val} == {8}
     g = group_by_run(load_records([str(tmp_path)]))
-    assert [r["t"] for r in g[7]] == sorted(r["t"] for r in g[7])
+    k = (str(tmp_path), 7)
+    assert [r["t"] for r in g[k]] == sorted(r["t"] for r in g[k])
+
+
+def test_load_tags_source(tmp_path):
+    with gzip.open(tmp_path / "run_00007.jsonl.gz", "wt") as f:
+        f.writelines(open(FIX / "adaptive_head.jsonl").readlines())
+    recs = load_records([str(tmp_path)])
+    assert recs and all(r["source"] == str(tmp_path) for r in recs)
 
 
 def test_old_format_encodes(adaptive, teacher):

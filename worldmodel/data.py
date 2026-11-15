@@ -22,12 +22,18 @@ def load_records(dirs: list[str], split: str | None = None) -> list[dict]:
                     if r.get("header"):          # teacher_v2 files start with a scenario header
                         continue
                     if split is None or split_of(r["run"]) == split:
+                        r["source"] = str(d)   # sets reuse run ids, so a run is (source, run)
                         out.append(r)
     return out
 
 
-def group_by_run(records: list[dict]) -> dict[int, list[dict]]:
-    g: dict[int, list[dict]] = defaultdict(list)
+def run_key(r: dict) -> tuple[str, int]:
+    """A run is identified by its source directory and run id (adaptive and MPC both have run 5)."""
+    return (r.get("source", ""), r["run"])
+
+
+def group_by_run(records: list[dict]) -> dict[tuple[str, int], list[dict]]:
+    g: dict[tuple[str, int], list[dict]] = defaultdict(list)
     for r in records:
-        g[r["run"]].append(r)
+        g[run_key(r)].append(r)
     return {k: sorted(v, key=lambda r: r["t"]) for k, v in sorted(g.items())}

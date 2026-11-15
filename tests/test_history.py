@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from worldmodel.data import group_by_run
 from worldmodel.features import INPUT_NAMES, STATE_NAMES, build_arrays, encode_input
 from worldmodel.history import build_history_arrays
 from worldmodel.model import MLP, GRUNet, Normalizer, WorldModel
@@ -83,3 +84,26 @@ def test_gru_save_load_same_predictions(tmp_path):
     m2 = WorldModel.load(tmp_path / "g.pt")
     assert m2.arch == "gru" and m2.history == 8
     np.testing.assert_allclose(m2.predict_delta(m2.prepare(H)), m.predict_delta(m.prepare(H)), rtol=1e-6)
+
+
+def test_same_run_id_two_sources_not_merged():
+    a = [json.loads(l) for l in open(FIX / "adaptive_head.jsonl")]
+    b = json.loads(json.dumps(a))
+    for r in a:
+        r["source"] = "a"
+    for r in b:
+        r["source"] = "b"
+        r["input"]["telemetry"]["gpu_temp"] = [t + 5 for t in r["input"]["telemetry"]["gpu_temp"]]
+    recs = a + b
+    assert len(group_by_run(recs)) == 2
+    H, S, Y, M, ordered = build_history_arrays(recs, 4)
+    starts = [i for i in range(len(ordered)) if i == 0 or ordered[i - 1]["source"] != ordered[i]["source"]]
+    assert starts == [0, 5]
+    for i in starts:
+        assert all((H[i, j] == H[i, -1]).all() for j in range(4))
+    assert all((H[6, j] == H[5, -1]).all() for j in range(3))
+
+
+def test_group_without_source():
+    a = [json.loads(l) for l in open(FIX / "adaptive_head.jsonl")]
+    assert list(group_by_run(a)) == [("", 11)]

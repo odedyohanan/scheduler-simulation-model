@@ -111,8 +111,9 @@ def main():
     for name, d in SETS.items():
         runs = group_by_run(load_records([d], split="test"))
         curves[name] = error_curves(model, runs, a.horizon, a.every)
-        for i, run in enumerate(list(runs)[:2]):
-            plot_example(model, runs[run], f"{name} run {run}: simulator vs MLP rollout from t=0",
+        for i, key in enumerate(list(runs)[:2]):
+            run = key[1]                     # key is (source, run); show the plain run number
+            plot_example(model, runs[key], f"{name} run {run}: simulator vs MLP rollout from t=0",
                          out / f"example_{name}_{run}.png")
         c = curves[name]
         md += [f"## {name} ({len(runs)} runs)", "", "| target | step 1 | step 5 | step 10 | step 20 |", "|---|---|---|---|---|"]
