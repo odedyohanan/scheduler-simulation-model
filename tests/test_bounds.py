@@ -54,3 +54,14 @@ def test_bounds_roundtrip(tmp_path):
     np.testing.assert_array_equal(b[0], lo); np.testing.assert_array_equal(b[1], hi)
     _model(0.5).save(tmp_path / "n.pt")
     assert WorldModel.load(tmp_path / "n.pt").bounds is None
+
+
+def test_at_max_fraction():
+    from experiments.rollout import error_curves
+    recs = _recs()
+    lo, hi = state_bounds(recs)
+    c = error_curves(_model(1e6, (lo, hi)), {("", 11): recs}, horizon=3, every=1)
+    assert all(v == 1.0 for t in c["at_max"] for v in c["at_max"][t])
+    c = error_curves(_model(-1e6, (lo, hi)), {("", 11): recs}, horizon=3, every=1)
+    assert all(v == 0.0 for t in c["at_max"] for v in c["at_max"][t])
+    assert "at_max" not in error_curves(_model(0.0), {("", 11): recs}, horizon=3, every=1)
