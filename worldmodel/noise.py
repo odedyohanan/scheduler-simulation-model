@@ -1,9 +1,12 @@
 """Noise floor: how unpredictable is the next window, even knowing the simulator's full hidden state?
 
 Replay a generated run to a window, then simulate that one window K times with different random
-seeds and the same policy. The spread of the outcomes is error no model can remove. It is reported as
-the mean absolute deviation from the mean outcome, which is directly comparable to a model's MAE
-(the best possible predictor, the true mean, would score exactly this).
+seeds and the same policy. The deep-copied simulator keeps its hidden state (individual queued requests,
+burst schedule, migration timers), so the spread is the randomness left *given everything*. It is
+reported as the mean absolute deviation from the mean outcome, comparable to a model's MAE.
+
+It is a lower bound: a model that sees only telemetry can't know the hidden state, so its best
+possible error is higher. It is also measured on a sample of states, not on every test transition.
 """
 from __future__ import annotations
 

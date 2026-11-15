@@ -51,3 +51,10 @@ def test_metrics_skip_nan_and_mask():
     p = {"x": np.array([1.0, np.nan, 100.0, 4.0])}
     m = per_target(t, p, {"x": np.array([1.0, 1.0, 0.0, 1.0])})
     assert m["x"]["n"] == 2 and m["x"]["mae"] == 0
+
+
+def test_metrics_median_robust_to_outlier():
+    t = {"x": np.array([1.0, 2.0, 3.0, 4.0, 5.0])}
+    p = {"x": np.array([1.0, 2.0, 3.0, 4.0, 1e7])}
+    m = per_target(t, p, {"x": np.ones(5)})
+    assert m["x"]["medae"] == 0 and m["x"]["mae"] > 1e6
