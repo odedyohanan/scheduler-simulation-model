@@ -5,7 +5,6 @@ __pycache__/
 data/
 models/
 logs/
-results/**/*.png
 .DS_Store
 .superpowers/
 docs/superpowers/

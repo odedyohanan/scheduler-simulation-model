@@ -25,6 +25,7 @@ from worldmodel.features import KEY_TARGETS, decode_state, encode_state, state_m
 from worldmodel.model import WorldModel  # noqa: E402
 from worldmodel.rollout import rollout  # noqa: E402
 
+CAP = 1e6   # plotted errors are capped here; the summary table keeps the real values
 UNITS = {"a.p99_ms": "ms", "a.queue_work_ms": "ms", "a.cpu_cores": "cores", "b.rate": "batches/s",
          "b.buffer": "batches", "c.work_core_ms": "core-ms", "gpu_temp_0": "°C", "gpu_temp_1": "°C"}
 
@@ -60,12 +61,15 @@ def plot_curves(curves: dict, path: Path, horizon: int):
     colors = dict(zip(curves, plt.rcParams["axes.prop_cycle"].by_key()["color"]))
     for ax, t in zip(axes.flat, KEY_TARGETS):
         for s, c in curves.items():
-            ax.plot(steps, c["mlp"][t], color=colors[s], label=f"{s} mlp")
+            mlp = np.minimum(np.nan_to_num(np.array(c["mlp"][t], float), nan=np.nan, posinf=CAP), CAP)
+            ax.plot(steps, mlp, color=colors[s], label=f"{s} mlp")
             ax.plot(steps, c["persistence"][t], color=colors[s], ls="--", alpha=0.6, label=f"{s} persistence")
         ax.set_title(t)
+        ax.set_yscale("log")          # rollout errors can explode by hundreds of orders of magnitude
         ax.set_xlabel("windows ahead (×0.5 s)")
         ax.set_ylabel(f"MAE ({UNITS[t]})")
     axes.flat[0].legend(fontsize=7)
+    fig.suptitle(f"Rollout error vs horizon (solid = MLP, dashed = persistence; MLP capped at {CAP:.0e})")
     fig.tight_layout()
     fig.savefig(path, dpi=110)
     plt.close(fig)
@@ -80,6 +84,9 @@ def plot_example(model, recs: list[dict], title: str, path: Path, horizon: int =
         ax.plot(x, t[k], label="simulator", color="black")
         ax.plot(x, p[k], label="MLP rollout", color="tab:orange")
         ax.set_title(k)
+        lo, hi = np.nanmin(t[k]), np.nanmax(t[k])
+        pad = (hi - lo) * 0.5 + 1e-6
+        ax.set_ylim(lo - pad, hi + pad)   # keep the simulator visible when the rollout explodes
         ax.set_xlabel("seconds")
         ax.set_ylabel(UNITS[k])
     axes.flat[0].legend()
