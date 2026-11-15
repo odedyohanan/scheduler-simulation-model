@@ -138,7 +138,7 @@ changes **one thing only**, so every result has a clear cause, and each step liv
 
 1. **Memory:** MLP → GRU, nothing else changed. *Done, see below.*
 2. **Varied data:** train on adaptive + MPC + student data. Does it generalise to other controllers? *Done, see below.*
-3. **Bounded predictions:** keep rollouts physical. Do the explosions stop?
+3. **Bounded predictions:** keep rollouts physical. Do the explosions stop? *Done, see below.*
 
 Later: an ensemble to tell when the model is uncertain, and a learned world model used for planning,
 i.e. choosing policies by imagining their outcomes.
@@ -291,6 +291,71 @@ All tables: [`results/compare_step2/report.md`](results/compare_step2/report.md)
 **Caveat:** one random seed per model, as in step 1. The step-2 improvements are large (several times),
 so they are very unlikely to be seed noise. Close calls between the two mixed-data models might be.
 
+## Step 3: do bounds stop the explosions?
+
+No retraining: the two step-2 models are reused with the same weights. The only change is in rollouts. For
+each of the 39 state numbers, we record the smallest and largest value in the model's own training data.
+After every predicted step, each number is clamped into that range. One-step results don't change.
+
+Clamping can hide a problem: a prediction can stop exploding and just sit at the largest value ever
+seen. So the rollout report also shows **how often a prediction is stuck at the training maximum**.
+
+### Many steps ahead: error after 10 s (20 windows)
+
+| Target | Test set | MLP | MLP, bounded | GRU | GRU, bounded | Persistence |
+|---|---|---|---|---|---|---|
+| A p99 latency (ms), after 5 s | MPC | 3.4 × 10²⁷⁸ | 68.9 | 63.1 | **37.7** | 20.0 |
+| A p99 latency (ms), after 2.5 s | student r2 | 4.5 × 10⁴ | 59.8 | **38.2** | 38.6 | 11.2 |
+| A p99 latency (ms) | MPC | 15.7 * | 54.5 | 2 490 | 24.6 | **23.3** |
+| A p99 latency (ms) | student r2 | 35.3 * | 132 | **34.0** | **34.0** | 50.7 |
+| C work (core-ms) | student r2 | 358 | **289** | 393 | 382 | 563 |
+| GPU 0 temperature (°C) | MPC | 1.97 | 0.95 | 1.11 | **0.87** | 6.36 |
+| GPU 0 temperature (°C) | student r2 | 2.30 | 0.96 | 0.89 | **0.76** | 5.93 |
+
+\* Not a real average. The unbounded MLP's exploded rollouts reach infinity by then and are left out.
+The bounded numbers include every rollout.
+
+![Rollout error, bounded vs unbounded](results/compare_step3/error_vs_horizon.png)
+
+All tables: [`results/compare_step3/report.md`](results/compare_step3/report.md). The "stuck at the maximum"
+tables are in `results/rollout_*_bounded/summary.md`.
+
+### What step 3 shows
+
+1. **Bounds stop every explosion.** The worst average latency error of any bounded rollout is now 132 ms,
+   against 10¹³³ ms before. All averages now include every rollout, so they're honest.
+2. **They also help where nothing exploded.** Small drifts get pulled back too. After 10 s, the MLP's
+   GPU temperature error halves on every test set (for example 2.30 → 0.96 °C on student r2), and C's work
+   error drops by up to 20%.
+3. **Predictions rarely hit the ceiling.** Latency and queue predictions sit at the training maximum in
+   at most 2% of cases. B's throughput hits its maximum more often (up to 20% for the GRU), but that one is
+   a real limit: B can't go above 1 000 batches/s, and the true value sits there in 19–29% of test
+   windows. GPU temperature reaches its maximum in up to 13% of predictions after 10 s, against about 5%
+   for the true values, so the models drift a little hot.
+4. **Bounded isn't the same as right.** The bounded MLP's latency stays well inside the range, but it is
+   still worse than "nothing changes" on other controllers' data (MPC: 54.5 against 23.3 ms). The MLP
+   drifts upward and nothing pulls it back. Bounds limit the damage but don't teach the model to correct
+   itself.
+5. **The best long-range model is now the bounded GRU.** After 10 s, it beats "nothing changes" on all
+   four plotted targets on adaptive and student r2 data. On MPC and student r1 data it beats it on three,
+   and is slightly worse on latency (24.6 against 23.3 ms; 6.7 against 5.6 ms).
+
+**Caveat:** same models and seeds as step 2. Step 3 changes only what happens after each prediction, so
+every difference here comes from the clamping.
+
+## Where the three steps leave us
+
+| Problem in v1 | Step | Result |
+|---|---|---|
+| No memory | 1: GRU | Helps on unfamiliar data, far fewer wild misses; no gain on familiar data |
+| Knows one controller | 2: varied data | The big win: errors 2–8× smaller on other controllers, including one never seen |
+| Rollouts explode | 3: bounds | No more explosions; drift remains, especially for the MLP |
+
+Possible next steps:
+- **Train on the model's own rollouts**, so it learns to correct its own drift.
+- **An ensemble of models**, to tell when the model is unsure.
+- **Planning with the learned model**, i.e. choosing policies by imagining their outcomes.
+
 ## How to run
 
 Python 3 with numpy, torch, matplotlib, pytest. The generalisation test sets come from a checkout of the
@@ -332,12 +397,20 @@ Step 2 models: the same commands, with three data directories (`$OLD` is `../pri
   mlp_v1:results/onestep:results/rollout,gru_h8:results/onestep_gru_h8:results/rollout_gru_h8,mlp_mix:results/onestep_mlp_mix:results/rollout_mlp_mix,gru_mix:results/onestep_gru_mix:results/rollout_gru_mix
 ```
 
+Step 3: add bounds to the step-2 models (weights unchanged), then run rollouts and compare:
+
+```bash
+.venv/bin/python experiments/add_bounds.py --model models/mlp_mix.pt --out models/mlp_mix_bounded.pt
+.venv/bin/python experiments/add_bounds.py --model models/gru_mix.pt --out models/gru_mix_bounded.pt
+# rollout.py --model models/<name>_bounded.pt --out results/rollout_<name>_bounded, then compare.py --out results/compare_step3
+```
+
 ## Layout
 
 ```
 sim/            the simulator and adaptive controller, copied from priority-scheduler (no CP-SAT)
 worldmodel/     generate.py, data.py, features.py, history.py, model.py (MLP, GRU), train.py,
-                baselines.py, metrics.py, noise.py, rollout.py
+                baselines.py, metrics.py, noise.py, rollout.py, bounds.py
 experiments/    command-line scripts for each step above
 scripts/        gentle.sh (run a long job at low priority on macOS), stop.sh
 results/        reports and plots
