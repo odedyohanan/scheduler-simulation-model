@@ -131,14 +131,68 @@ Tables and more examples: [`results/rollout/summary.md`](results/rollout/summary
    can be closed from telemetry alone. But the gap is large, which points to a model that remembers
    recent windows, i.e. a GRU.
 
-## Next steps
+## Roadmap: fix the three weaknesses, one at a time
 
-- Train on a mix of controllers (adaptive + MPC + student data) and see how much point 4 improves.
-- Keep rollouts physical: bound predictions to what is possible (a queue cannot grow faster than arrivals).
-- A **GRU** over several past windows: the simulator has hidden state (individual queued requests, bursts
-  in progress) that one window of telemetry doesn't show.
-- An ensemble to tell when the model is *uncertain*, for example on unfamiliar controllers.
-- Later: a learned world model used for planning, i.e. choosing policies by imagining their outcomes.
+v1 has three problems: no memory, it knows only one controller, and its rollouts explode. Each step below
+changes **one thing only**, so every result has a clear cause, and each step lives on its own branch.
+
+1. **Memory:** MLP → GRU, nothing else changed. *Done, see below.*
+2. **Varied data:** train on adaptive + MPC + student data. Does it generalise to other controllers?
+3. **Bounded predictions:** keep rollouts physical. Do the explosions stop?
+
+Later: an ensemble to tell when the model is uncertain, and a learned world model used for planning,
+i.e. choosing policies by imagining their outcomes.
+
+## Step 1: does memory help?
+
+Two new models, with the same data, inputs, outputs, training and tests as v1:
+
+| Model | What it sees |
+|---|---|
+| MLP v1 | the last window only |
+| MLP with history (`mlp_h4`) | the last 4 windows, glued into one long input |
+| GRU (`gru_h8`) | the last 8 windows, read one by one, with a memory |
+
+The MLP with history checks whether simply *seeing more* is enough. If the GRU beats it, the way the GRU
+uses memory matters.
+
+### One step ahead (mean / median absolute error; bold = best median)
+
+| Target | Test set | MLP v1 | MLP with history | GRU |
+|---|---|---|---|---|
+| A p99 latency (ms) | adaptive | 5.1 / **0.50** | 5.8 / 0.57 | 4.5 / 0.57 |
+| B batches/s | adaptive | 18.5 / **8.7** | 23.0 / 12.9 | 22.6 / 11.9 |
+| A queued work (ms) | MPC | 10 700 / 2.96 | 402 / 3.19 | 37 / **2.14** |
+| A p99 latency (ms) | MPC | 38.8 / **2.25** | 14.9 / 3.21 | 9.1 / 2.39 |
+
+### Many steps ahead: A p99 latency error after 10 s (20 windows)
+
+| Test set | MLP v1 | MLP with history | GRU | Persistence |
+|---|---|---|---|---|
+| adaptive | 1.7 × 10¹⁸ | 18.7 | 20.3 | 31.6 |
+| MPC | 1.9 × 10²⁹⁰ | 1.0 × 10³² | **456** | 23.3 |
+| student r1 | 4.6 × 10²³⁴ | 4.3 × 10²² | **27.4** | 5.6 |
+
+![Rollout error, three models](results/compare_step1/error_vs_horizon.png)
+
+All tables: [`results/compare_step1/report.md`](results/compare_step1/report.md).
+
+### What step 1 shows
+
+1. **Memory doesn't help the typical one-step prediction.** On medians, MLP v1 is as good as or better
+   than both history models on most targets. Both history models also have a *worse* validation loss
+   (0.195 and 0.202, against 0.173), while their training loss is *lower*. That is **overfitting**: with
+   more input, they start memorising details of the 240 training runs instead of general rules.
+2. **The GRU makes far fewer wild mistakes.** On MPC data, A's queue error falls from 10 700 ms (mean) to
+   37 ms. The rare huge misses mostly disappear.
+3. **The GRU's rollouts no longer explode.** After 10 s, MLP v1's latency predictions reach 10²⁹⁰. The
+   GRU's stay in a sane range on every test set. The MLP with history still explodes, so *seeing more*
+   isn't what fixed it. A likely reason: the GRU's memory is squashed into a fixed range (tanh), which
+   makes extreme outputs hard to produce. That is a side effect of the architecture, not proof that it
+   "understands" the queue.
+4. **It is still worse than "nothing changes" on other controllers.** On MPC and student runs, persistence
+   wins on latency and B's throughput. Step 1 didn't fix the data problem; that's step 2's job.
+5. **Over 10 s on familiar data, the GRU is best on GPU temperature and B's throughput.**
 
 ## How to run
 
@@ -162,12 +216,22 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python experiments/rollout.py --model models/mlp_v1.pt --out results/rollout
 ```
 
+Step 1 models (each a few minutes on CPU), then the comparison:
+
+```bash
+.venv/bin/python experiments/train.py --data data/adaptive_v1 --arch mlp --history 4 --out models/mlp_h4.pt
+.venv/bin/python experiments/train.py --data data/adaptive_v1 --arch gru --history 8 --out models/gru_h8.pt
+# for each model: evaluate.py --noise-runs 0 --out results/onestep_<name>, rollout.py --out results/rollout_<name>
+.venv/bin/python experiments/compare.py --out results/compare_step1 --models \
+  mlp_v1:results/onestep:results/rollout,mlp_h4:results/onestep_mlp_h4:results/rollout_mlp_h4,gru_h8:results/onestep_gru_h8:results/rollout_gru_h8
+```
+
 ## Layout
 
 ```
 sim/            the simulator and adaptive controller, copied from priority-scheduler (no CP-SAT)
-worldmodel/     generate.py, data.py, features.py, model.py, train.py, baselines.py,
-                metrics.py, noise.py, rollout.py
+worldmodel/     generate.py, data.py, features.py, history.py, model.py (MLP, GRU), train.py,
+                baselines.py, metrics.py, noise.py, rollout.py
 experiments/    command-line scripts for each step above
 scripts/        gentle.sh (run a long job at low priority on macOS), stop.sh
 results/        reports and plots
